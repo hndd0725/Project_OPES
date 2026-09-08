@@ -2,6 +2,7 @@
 #pragma once
 #include <thread>
 #include <atomic>
+#include "protocol.h"   // TIMER_ADVENTURE (resetRoom 기본 인자)
 
 class IOCompletionPort;
 
