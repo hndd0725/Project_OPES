@@ -703,9 +703,7 @@ void IOCompletionPort::RemoveClient(stClientInfo* c)
 {
     if (!c) return;
 
-    //  이미 제거된 클라이언트는 다시 처리하지 않음
-    if (c->alreadyRemoved.exchange(true))
-        return;
+    // 중복 제거 요청 차단은 PostRemove에서 처리 (진입 경로가 ProcessDelayedRemoves 단독)
 
     // ②소켓 닫기
     if (c->socketClient != INVALID_SOCKET) {
@@ -1550,15 +1548,21 @@ void IOCompletionPort::WorkThread() {
                 << client->id << " 접속 해제!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
             //Remove--
              // 방 찾기
+            // 3인이 모여 CreateRoom()이 돌기 전(대기열 상태)에 나간 클라이언트는
+            // rooms에 아직 등록되어 있지 않다. 이때는 브로드캐스트만 건너뛰고
+            // 세션 정리는 똑같이 수행해야 한다.
+            // (여기서 return하면 유일한 워커 스레드가 종료되어 서버 전체가 멈춘다)
             auto it = rooms.find(client->roomID);
-            if (it == rooms.end()) {
-                std::cout << "[ProcessPacket] Invalid roomID\n";
-                return; // ✅ continue 대신 return 권장 (room 없으면 더 이상 처리 의미 없음)
+            if (it != rooms.end()) {
+                Room& room = it->second;
+                for (auto* otherClient : room.clients) {
+                    if (!otherClient || otherClient == client) continue;
+                    SendData_DisconnectPacket(otherClient, client->id);
+                }
             }
-            Room& room = it->second;
-            for (auto* otherClient : room.clients) {
-                if (!otherClient || otherClient == client) continue;
-                SendData_DisconnectPacket(otherClient, client->id);
+            else {
+                std::cout << "[연결 종료] roomID " << client->roomID
+                    << " 미등록 - 대기열 상태 종료로 보고 세션만 정리\n";
             }
             PostRemove(client);
             ProcessDelayedRemoves();
